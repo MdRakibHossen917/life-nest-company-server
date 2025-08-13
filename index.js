@@ -1,19 +1,26 @@
+// server.js (or index.js)
+
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
-const jwt = require("jsonwebtoken");
+dotenv.config();
+
 const admin = require("firebase-admin");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-
-dotenv.config();
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
 const port = process.env.PORT || 5000;
 
-app.use(cors());
+// CORS setup - allow your frontend origins
+const corsOptions = {
+  origin: ["http://localhost:5173", "http://localhost:5174"],
+  credentials: true,
+};
+app.use(cors(corsOptions));
 app.use(express.json());
 
-// ✅ Firebase Admin Initialization
+// Firebase Admin Initialization
 const decodedKey = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
   "utf8"
 );
@@ -23,48 +30,53 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
 
-// ✅ MongoDB Setup
+// Middleware to verify Firebase ID Token
+async function verifyToken(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Unauthorized, no token" });
+  }
+  const idToken = authHeader.split(" ")[1];
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    req.user = decodedToken; // You can access user info in routes via req.user
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: "Unauthorized, invalid token" });
+  }
+}
+
+// MongoDB Setup
 const uri = process.env.MONGODB_URI;
 const client = new MongoClient(uri, {
   serverApi: ServerApiVersion.v1,
 });
 
-// ✅ JWT Middleware
-// function verifyJWT(req, res, next) {
-//   const authHeader = req.headers.authorization;
-//   if (!authHeader)
-//     return res.status(401).json({ message: "Unauthorized: No token provided" });
-
-//   const token = authHeader.split(" ")[1];
-//   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-//     if (err)
-//       return res.status(403).json({ message: "Forbidden: Invalid token" });
-//     req.user = decoded;
-//     next();
-//   });
-// }
-
-// ✅ Main Server Logic
 async function run() {
   try {
+    await client.connect();
+
     const db = client.db("lifenestDB");
     const policiesCollection = db.collection("policies");
     const applicationsCollection = db.collection("applications");
     const usersCollection = db.collection("users");
+    const paymentsCollection = db.collection("payments");
 
-    // Add Policy
-    app.post("/policies", async (req, res) => {
+    // Add a new insurance policy (Protected)
+    app.post("/policies", verifyToken, async (req, res) => {
       try {
-        const result = await policiesCollection.insertOne(req.body);
+        const policy = req.body;
+        // Add validation here if needed
+        const result = await policiesCollection.insertOne(policy);
         res.send({ success: true, insertedId: result.insertedId });
-      } catch {
+      } catch (error) {
         res
           .status(500)
           .send({ success: false, message: "Failed to create policy" });
       }
     });
 
-    // Get All Policies
+    // Get policies with optional category filter & pagination (Public)
     app.get("/policies", async (req, res) => {
       try {
         const { category, page = 1, limit = 9 } = req.query;
@@ -81,12 +93,12 @@ async function run() {
         const categories = await policiesCollection.distinct("category");
 
         res.json({ policies, total, categories });
-      } catch {
+      } catch (error) {
         res.status(500).json({ message: "Failed to fetch policies" });
       }
     });
 
-    // Get Policy by ID
+    // Get policy by ID (Public)
     app.get("/policies/:id", async (req, res) => {
       try {
         const policy = await policiesCollection.findOne({
@@ -95,59 +107,88 @@ async function run() {
         if (!policy)
           return res.status(404).json({ message: "Policy not found" });
         res.send(policy);
-      } catch {
+      } catch (error) {
         res.status(500).json({ message: "Failed to fetch policy" });
       }
     });
 
-    // Add User
+    // Add a new user (Public)
     app.post("/users", async (req, res) => {
       try {
-        const result = await usersCollection.insertOne(req.body);
+        const user = req.body;
+        // Optionally validate user data here
+        const result = await usersCollection.insertOne(user);
         res.send({ success: true, insertedId: result.insertedId });
-      } catch {
+      } catch (error) {
         res.status(500).send({ success: false, message: "Failed to add user" });
       }
     });
 
-    
+    // Apply for Policy (Add application) (Protected)
+    app.post("/applications", verifyToken, async (req, res) => {
+      try {
+        const application = req.body;
+        // Validate application fields if needed
+        const result = await applicationsCollection.insertOne(application);
+        res.json({ insertedId: result.insertedId });
+      } catch (error) {
+        res.status(500).json({ message: "Failed to create application" });
+      }
+    });
 
-    // Apply for a Policy
-   app.post("/applications", async (req, res) => {
-     try {
-       // req.body should contain { name, email, status, ... }
-       const result = await applicationsCollection.insertOne(req.body);
-       res.send({ insertedId: result.insertedId });
-     } catch (error) {
-       res.status(500).send({ message: "Failed to save application" });
-     }
-   });
+    // Update application status (Protected)
+    app.patch("/applications/:id/status", verifyToken, async (req, res) => {
+      const { id } = req.params;
+      const { status } = req.body;
+      try {
+        const result = await applicationsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status } }
+        );
+        if (result.modifiedCount === 1) {
+          res.json({ success: true });
+        } else {
+          res.status(404).json({ message: "Application not found" });
+        }
+      } catch (error) {
+        res
+          .status(500)
+          .json({ message: "Failed to update application status" });
+      }
+    });
 
+    // Get applications by user email (Protected)
+    app.get("/applications", verifyToken, async (req, res) => {
+      try {
+        const email = req.query.email;
+        if (!email)
+          return res.status(400).send({ message: "Email query required" });
 
-    // Get applications by user email
- app.get("/applications", async (req, res) => {
-   try {
-     const email = req.query.email;
-     console.log("Requested applications for email:", email);
+        const applications = await applicationsCollection
+          .find({ email })
+          .toArray();
+        res.send(applications);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to get applications" });
+      }
+    });
 
-     if (!email)
-       return res.status(400).send({ message: "Email query required" });
+    // Get application by ID (Protected)
+    app.get("/applications/:id", verifyToken, async (req, res) => {
+      try {
+        const application = await applicationsCollection.findOne({
+          _id: new ObjectId(req.params.id),
+        });
+        if (!application)
+          return res.status(404).send({ message: "Application not found" });
+        res.send(application);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch application" });
+      }
+    });
 
-     const applications = await applicationsCollection
-       .find({ email })
-       .toArray();
-     console.log("Found applications:", applications.length);
-     res.send(applications);
-   } catch (error) {
-     console.error(error);
-     res.status(500).send({ message: "Failed to get applications" });
-   }
- });
-
-
-
-    // Delete Application
-    app.delete("/applications/:id", async (req, res) => {
+    // Delete application (Protected)
+    app.delete("/applications/:id", verifyToken, async (req, res) => {
       try {
         const result = await applicationsCollection.deleteOne({
           _id: new ObjectId(req.params.id),
@@ -159,18 +200,101 @@ async function run() {
             .status(404)
             .send({ success: false, message: "Application not found" });
         }
-      } catch {
+      } catch (error) {
         res
           .status(500)
           .send({ success: false, message: "Failed to delete application" });
       }
     });
 
-    app.get("/", (req, res) => {
-      res.send("✅ LifeNest Insurance Server is running!");
+    // Record payment and update application status (Protected)
+    app.post("/payments", verifyToken, async (req, res) => {
+      try {
+        const { applicationId, email, amount, paymentMethod, transactionId } =
+          req.body;
+
+        const paymentDoc = {
+          applicationId: new ObjectId(applicationId),
+          email,
+          amount,
+          paymentMethod,
+          transactionId,
+          paid_at: new Date(),
+        };
+
+        const paymentResult = await paymentsCollection.insertOne(paymentDoc);
+
+        // Update application status to "paid"
+        const updateResult = await applicationsCollection.updateOne(
+          { _id: new ObjectId(applicationId) },
+          { $set: { status: "paid" } }
+        );
+
+        if (updateResult.modifiedCount === 0) {
+          return res
+            .status(404)
+            .json({ message: "Application not found or status update failed" });
+        }
+
+        res.status(201).json({
+          success: true,
+          message: "Payment recorded and application status updated to paid",
+          insertedId: paymentResult.insertedId,
+        });
+      } catch (error) {
+        console.error("Payment processing failed:", error);
+        res.status(500).json({ message: "Failed to record payment" });
+      }
     });
+
+    // Get payments by applicationId or email (Protected)
+    app.get("/payments", verifyToken, async (req, res) => {
+      try {
+        const { applicationId, email } = req.query;
+
+        let query = {};
+        if (applicationId) query.applicationId = new ObjectId(applicationId);
+        else if (email) query.email = email;
+
+        const payments = await paymentsCollection
+          .find(query)
+          .sort({ paid_at: -1 })
+          .toArray();
+
+        res.json(payments);
+      } catch (error) {
+        console.error("Error fetching payments:", error);
+        res.status(500).json({ message: "Failed to get payments" });
+      }
+    });
+
+    // Stripe: Create Payment Intent (Protected)
+    app.post("/create-payment-intent", verifyToken, async (req, res) => {
+      const amountInCents = req.body.amountInCents;
+      try {
+        if (!amountInCents || amountInCents <= 0) {
+          return res.status(400).json({ error: "Invalid amount" });
+        }
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: amountInCents,
+          currency: "usd",
+          payment_method_types: ["card"],
+        });
+
+        res.json({ clientSecret: paymentIntent.client_secret });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Health check route (Public)
+    app.get("/", (req, res) => {
+      res.send("LifeNest Insurance Server is running!");
+    });
+
+    console.log("Connected to MongoDB and ready to accept requests!");
   } catch (err) {
-    console.error("🔥 Server error:", err);
+    console.error("Server error:", err);
   }
 }
 

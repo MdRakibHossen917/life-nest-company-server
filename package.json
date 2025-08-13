@@ -10,11 +10,13 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@stripe/react-stripe-js": "^3.9.0",
     "axios": "^1.11.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "firebase-admin": "^13.4.0",
-    "mongodb": "^6.18.0"
+    "mongodb": "^6.18.0",
+    "stripe": "^18.4.0"
   }
 }
