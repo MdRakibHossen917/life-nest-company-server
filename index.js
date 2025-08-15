@@ -62,6 +62,9 @@ async function run() {
     const usersCollection = db.collection("users");
     const paymentsCollection = db.collection("payments");
     const blogsCollection = db.collection("blogs");
+    const newsletterSubscribersCollection = db.collection(
+      "newsletterSubscribers"
+    );
 
     // Add a new insurance policy (Protected)
     app.post("/policies", verifyToken, async (req, res) => {
@@ -96,6 +99,86 @@ async function run() {
         res.json({ policies, total, categories });
       } catch (error) {
         res.status(500).json({ message: "Failed to fetch policies" });
+      }
+    });
+
+    //
+    // Get 6 most popular policies (Public)
+    app.get("/policies/popular", async (req, res) => {
+      try {
+        const popularPolicies = await applicationsCollection
+          .aggregate([
+            { $addFields: { policyId: { $toObjectId: "$policyId" } } }, // string → ObjectId
+            { $group: { _id: "$policyId", count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $limit: 6 },
+            {
+              $lookup: {
+                from: "policies",
+                localField: "_id",
+                foreignField: "_id",
+                as: "policy",
+              },
+            },
+            { $unwind: "$policy" },
+            { $replaceRoot: { newRoot: "$policy" } },
+          ])
+          .toArray();
+
+        res.json(popularPolicies);
+      } catch (err) {
+        console.error("Error fetching popular policies:", err);
+        res.status(500).json({ message: "Failed to fetch popular policies" });
+      }
+    });
+
+    // Newsletter subscription endpoint
+    app.post("/subscribe", async (req, res) => {
+      try {
+        const { name, email } = req.body;
+
+        // Basic validation
+        if (!name || !email) {
+          return res.status(400).json({
+            success: false,
+            message: "Name and email are required",
+          });
+        }
+
+        // Check if email already exists
+        const existingSubscriber =
+          await newsletterSubscribersCollection.findOne({ email });
+        if (existingSubscriber) {
+          return res.status(409).json({
+            success: false,
+            message: "This email is already subscribed",
+          });
+        }
+
+        // Create new subscriber
+        const newSubscriber = {
+          name,
+          email,
+          subscribedAt: new Date(),
+          active: true,
+        };
+
+        const result = await newsletterSubscribersCollection.insertOne(
+          newSubscriber
+        );
+
+        res.status(201).json({
+          success: true,
+          message: "Thank you for subscribing!",
+          subscriberId: result.insertedId,
+        });
+      } catch (error) {
+        console.error("Subscription error:", error);
+        res.status(500).json({
+          success: false,
+          message: "Failed to process subscription",
+          error: error.message,
+        });
       }
     });
 
@@ -225,6 +308,21 @@ async function run() {
       } catch (error) {
         console.error("Error fetching blogs:", error);
         res.status(500).send({ message: "Failed to fetch blogs" });
+      }
+    });
+    // Get latest 4 blogs (Public)
+    app.get("/blogs/latest", async (req, res) => {
+      try {
+        const latestBlogs = await blogsCollection
+          .find()
+          .sort({ publishDate: -1 }) //new post depend
+          .limit(4)
+          .toArray();
+
+        res.send(latestBlogs);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to fetch latest blogs" });
       }
     });
 
