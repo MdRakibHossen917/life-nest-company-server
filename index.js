@@ -61,6 +61,7 @@ async function run() {
     const applicationsCollection = db.collection("applications");
     const usersCollection = db.collection("users");
     const paymentsCollection = db.collection("payments");
+    const blogsCollection = db.collection("blogs");
 
     // Add a new insurance policy (Protected)
     app.post("/policies", verifyToken, async (req, res) => {
@@ -109,18 +110,6 @@ async function run() {
         res.send(policy);
       } catch (error) {
         res.status(500).json({ message: "Failed to fetch policy" });
-      }
-    });
-
-    // Add a new user (Public)
-    app.post("/users", async (req, res) => {
-      try {
-        const user = req.body;
-        // Optionally validate user data here
-        const result = await usersCollection.insertOne(user);
-        res.send({ success: true, insertedId: result.insertedId });
-      } catch (error) {
-        res.status(500).send({ success: false, message: "Failed to add user" });
       }
     });
 
@@ -204,6 +193,38 @@ async function run() {
         res
           .status(500)
           .send({ success: false, message: "Failed to delete application" });
+      }
+    });
+
+    // ✅ Add Blog Route
+    // ✅ Add Blog (Protected)
+    app.post("/blogs", verifyToken, async (req, res) => {
+      try {
+        const blog = req.body;
+
+        // Force the author from the authenticated user
+        blog.author = req.user.name || req.user.email || "Unknown Author";
+        blog.publishDate = new Date();
+
+        const result = await blogsCollection.insertOne(blog);
+        res.send({ insertedId: result.insertedId });
+      } catch (error) {
+        console.error("Error inserting blog:", error);
+        res.status(500).send({ message: "Failed to publish blog" });
+      }
+    });
+    // ✅ Get All Blogs (Public)
+    app.get("/blogs", async (req, res) => {
+      try {
+        const blogs = await blogsCollection
+          .find()
+          .sort({ publishDate: -1 }) // latest first
+          .toArray();
+
+        res.send(blogs);
+      } catch (error) {
+        console.error("Error fetching blogs:", error);
+        res.status(500).send({ message: "Failed to fetch blogs" });
       }
     });
 
