@@ -62,6 +62,7 @@ async function run() {
     const usersCollection = db.collection("users");
     const paymentsCollection = db.collection("payments");
     const blogsCollection = db.collection("blogs");
+    const AgentsCollection = db.collection("agent");
     const newsletterSubscribersCollection = db.collection(
       "newsletterSubscribers"
     );
@@ -106,29 +107,245 @@ async function run() {
     // Get 6 most popular policies (Public)
     app.get("/policies/popular", async (req, res) => {
       try {
-        const popularPolicies = await applicationsCollection
+        const result = await db
+          .collection("purchases")
           .aggregate([
-            { $addFields: { policyId: { $toObjectId: "$policyId" } } }, // string → ObjectId
-            { $group: { _id: "$policyId", count: { $sum: 1 } } },
-            { $sort: { count: -1 } },
+            {
+              $group: {
+                _id: "$policyId",
+                purchaseCount: { $sum: 1 },
+              },
+            },
+            { $sort: { purchaseCount: -1 } },
             { $limit: 6 },
             {
               $lookup: {
                 from: "policies",
                 localField: "_id",
                 foreignField: "_id",
-                as: "policy",
+                as: "policyDetails",
               },
             },
-            { $unwind: "$policy" },
-            { $replaceRoot: { newRoot: "$policy" } },
+            { $unwind: "$policyDetails" },
+            {
+              $project: {
+                _id: 0,
+                policyId: "$_id",
+                purchaseCount: 1,
+                title: "$policyDetails.title",
+                coverageAmount: "$policyDetails.coverageAmount",
+                termDuration: "$policyDetails.termDuration",
+                popularity: "$policyDetails.popularity",
+              },
+            },
           ])
           .toArray();
 
-        res.json(popularPolicies);
+        res.json(result);
+      } catch (error) {
+        console.error("Popular policies error:", error);
+        res.status(500).send(error.message);
+      }
+    });
+
+    // Get user profile by email
+    app.get("/users", async (req, res) => {
+      try {
+        const email = req.query.email;
+        if (!email) return res.status(400).json({ message: "Email required" });
+
+        const userProfile = await usersCollection.findOne({ email });
+        res.json(userProfile || {});
       } catch (err) {
-        console.error("Error fetching popular policies:", err);
-        res.status(500).json({ message: "Failed to fetch popular policies" });
+        res.status(500).json({ message: "Failed to fetch user" });
+      }
+    });
+
+    //------------------17-08
+    // POST: Submit agent request (user)
+    app.post("/agents", async (req, res) => {
+      const agentData = req.body;
+
+      if (!agentData.name || !agentData.email || !agentData.district) {
+        return res
+          .status(400)
+          .json({ error: "Name, Email & District are required" });
+      }
+
+      try {
+        // Check if email already submitted
+        const existingAgent = await AgentsCollection.findOne({
+          email: agentData.email,
+        });
+
+        if (existingAgent) {
+          return res.status(409).json({
+            success: false,
+            message: "You have already submitted an agent request",
+          });
+        }
+
+        // Default values
+        agentData.status = "pending";
+        agentData.created_at = new Date();
+
+        const result = await AgentsCollection.insertOne(agentData);
+        res.status(201).json({
+          success: true,
+          message: "Agent request submitted",
+          insertedId: result.insertedId,
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to submit agent request" });
+      }
+    });
+
+    // GET: Fetch all agents (admin view)
+    app.get("/agents/all", async (req, res) => {
+      try {
+        const agents = await AgentsCollection.find({}).toArray();
+        res.json(agents);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch agents" });
+      }
+    });
+
+    // PATCH: Approve/Disapprove agent (admin)
+    app.patch("/agents/:id", async (req, res) => {
+      const id = req.params.id;
+      const { status } = req.body;
+
+      try {
+        const result = await AgentsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status } }
+        );
+        if (result.modifiedCount === 1) {
+          res.json({ success: true });
+        } else {
+          res.status(404).json({ error: "Agent not found" });
+        }
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to update agent" });
+      }
+    });
+
+    // DELETE: Remove agent (admin)
+    app.delete("/agents/:id", async (req, res) => {
+      const id = req.params.id;
+
+      try {
+        const result = await AgentsCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+        if (result.deletedCount === 1) {
+          res.json({ success: true });
+        } else {
+          res.status(404).json({ error: "Agent not found" });
+        }
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to delete agent" });
+      }
+    });
+
+    // Update user profile
+    app.patch("/users/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        const updateData = req.body;
+
+        const result = await usersCollection.updateOne(
+          { email },
+          { $set: updateData }
+        );
+
+        if (result.modifiedCount === 1) {
+          res.json({ success: true });
+        } else {
+          res.status(404).json({ success: false, message: "User not found" });
+        }
+      } catch (err) {
+        res
+          .status(500)
+          .json({ success: false, message: "Failed to update user" });
+      }
+    });
+
+    //agent
+    // POST route for adding a new agent
+    // POST: Submit agent request
+    app.post("/agents", async (req, res) => {
+      const agentData = req.body;
+
+      if (!agentData.name || !agentData.email || !agentData.district) {
+        return res
+          .status(400)
+          .json({ error: "Name, Email & District are required" });
+      }
+
+      // Default values
+      agentData.status = "pending";
+      agentData.created_at = new Date();
+
+      try {
+        const result = await AgentsCollection.insertOne(agentData);
+        res.status(201).json({ success: true, insertedId: result.insertedId });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to submit agent request" });
+      }
+    });
+
+    // GET: Fetch all approved agents (for frontend display)
+    app.get("/agents", async (req, res) => {
+      try {
+        const agents = await AgentsCollection.find({
+          status: "approved",
+        }).toArray();
+        res.json(agents);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch agents" });
+      }
+    });
+
+    // PATCH: Approve agent (for admin)
+    app.patch("/agents/:id/approve", async (req, res) => {
+      const id = req.params.id;
+      try {
+        const result = await AgentsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: "approved" } }
+        );
+        if (result.modifiedCount === 1) {
+          res.json({ success: true });
+        } else {
+          res.status(404).json({ error: "Agent not found" });
+        }
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to approve agent" });
+      }
+    });
+    // Get 3 featured agents
+    app.get("/agents", async (req, res) => {
+      try {
+        const agentsCollection = db.collection("agent");
+
+        // শুধুমাত্র 3টি agent, যদি featured থাকে তাহলে filter করতে পারো
+        const featuredAgents = await agentsCollection
+          .find({ featured: true }) // optional, যদি featured flag থাকে
+          .limit(3)
+          .toArray();
+
+        res.json(featuredAgents);
+      } catch (err) {
+        console.error("Failed to fetch agents:", err);
+        res.status(500).json({ message: "Failed to fetch agents" });
       }
     });
 
