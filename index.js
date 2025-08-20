@@ -10,7 +10,6 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const app = express();
 const port = process.env.PORT || 5000;
 
-// CORS setup
 const corsOptions = {
   origin: ["http://localhost:5173", "http://localhost:5174"],
   credentials: true,
@@ -18,7 +17,6 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
-// Firebase Admin Initialization
 const decodedKey = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
   "utf8"
 );
@@ -28,7 +26,6 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
 
-// MongoDB Setup
 const uri = process.env.MONGODB_URI;
 const client = new MongoClient(uri, {
   serverApi: ServerApiVersion.v1,
@@ -36,7 +33,6 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    await client.connect();
 
     const db = client.db("lifenestDB");
     const collections = {
@@ -50,7 +46,6 @@ async function run() {
       purchases: db.collection("purchases"),
     };
 
-    // Custom middlewares
     const verifyJWT = async (req, res, next) => {
       const authHeader = req.headers.authorization;
       if (!authHeader) return res.status(401).send({ message: "Unauthorized" });
@@ -114,12 +109,10 @@ async function run() {
       }
     };
 
-    // Health check route
     app.get("/", (req, res) => {
       res.send("LifeNest Insurance Server is running!");
     });
 
-    // Policy Routes
     app.post("/policies", async (req, res) => {
       try {
         const policy = req.body;
@@ -260,7 +253,26 @@ async function run() {
         res.status(500).json({ message: "Failed to fetch user" });
       }
     });
-
+    app.get("/agents/all", async (req, res) => {
+      try {
+        const agents = await collections.agents.find({}).toArray();
+        res.json(agents); // return as array
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Failed to fetch agents" });
+      }
+    });
+    app.get("/users/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        const user = await collections.users.findOne({ email });
+        if (!user) return res.status(404).json({ message: "User not found" });
+        res.json(user);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
     app.post("/users", async (req, res) => {
       try {
         const userData = req.body;
@@ -271,32 +283,31 @@ async function run() {
             .json({ message: "Name and Email are required" });
         }
 
+        // Default role
         if (!userData.role) {
           userData.role = "user";
         }
 
-        const existingUser = await collections.users.findOne({
-          email: userData.email,
-        });
-        if (existingUser) {
-          return res
-            .status(409)
-            .json({ message: "User with this email already exists" });
-        }
+        const result = await collections.users.updateOne(
+          { email: userData.email },
+          { $set: userData },
+          { upsert: true }
+        );
 
-        const result = await collections.users.insertOne(userData);
-        res.status(201).json({ success: true, insertedId: result.insertedId });
+        res.status(200).json({ success: true, data: userData });
       } catch (err) {
         console.error(err);
-        res.status(500).json({ message: "Failed to create user" });
+        res.status(500).json({ message: "Failed to create or update user" });
       }
     });
 
-    app.patch("/users/:email", async (req, res) => {
+    // In your server.js, find the PATCH /users/:email endpoint and update it:
+    app.patch("/users/:email", verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
         const updateData = req.body;
 
+        // Allow users to update their own profile OR allow admins to update any profile
         if (req.user.email !== email && req.user.role !== "admin") {
           return res.status(403).json({ message: "Forbidden" });
         }
@@ -318,7 +329,6 @@ async function run() {
           .json({ success: false, message: "Failed to update user" });
       }
     });
-
     // Make Admin route
     app.put("/make-admin", async (req, res) => {
       const { email } = req.body;
@@ -381,22 +391,26 @@ async function run() {
       }
     });
 
+    // Get only 3 approved agents
     app.get("/agents", async (req, res) => {
       try {
-        const { limit } = req.query;
+        const limit = parseInt(req.query.limit) || 3; // default 3
         const query = { status: "approved" };
 
-        const agents = limit
-          ? await collections.agents
-              .find(query)
-              .limit(parseInt(limit))
-              .toArray()
-          : await collections.agents.find(query).toArray();
+        const agents = await collections.agents
+          .find(query)
+          .limit(limit)
+          .toArray();
 
-        res.json(agents);
+        res.json({
+          success: true,
+          data: agents,
+        });
       } catch (err) {
         console.error(err);
-        res.status(500).json({ message: "Failed to fetch agents" });
+        res
+          .status(500)
+          .json({ success: false, message: "Failed to fetch agents" });
       }
     });
 
@@ -416,16 +430,15 @@ async function run() {
       }
     });
 
-    app.patch("/agents/:id", async (req, res) => {
+    app.patch("/agents/:id/status", async (req, res) => {
       try {
         const id = req.params.id;
         const { status } = req.body;
 
-        if (!["approved", "pending"].includes(status)) {
-          return res.status(400).json({
-            success: false,
-            message: "Invalid status value",
-          });
+        if (!["approved", "pending", "disapproved"].includes(status)) {
+          return res
+            .status(400)
+            .json({ success: false, message: "Invalid status value" });
         }
 
         const result = await collections.agents.updateOne(
@@ -434,22 +447,15 @@ async function run() {
         );
 
         if (result.modifiedCount === 1) {
-          res.json({
-            success: true,
-            message: "Agent status updated",
-          });
+          res.json({ success: true, message: "Agent status updated" });
         } else {
-          res.status(404).json({
-            success: false,
-            message: "Agent not found",
-          });
+          res.status(404).json({ success: false, message: "Agent not found" });
         }
       } catch (err) {
         console.error(err);
-        res.status(500).json({
-          success: false,
-          message: "Failed to update agent",
-        });
+        res
+          .status(500)
+          .json({ success: false, message: "Failed to update agent" });
       }
     });
 
@@ -480,12 +486,11 @@ async function run() {
       }
     });
 
-    // Fetch all applications
     app.get("/all", verifyJWT, async (req, res) => {
       const applications = await db.collection("applications").find().toArray();
       res.send(applications);
     });
-    // Agent assignment routes
+
     app.patch("/assign/:id", verifyJWT, async (req, res) => {
       const { agentEmail } = req.body;
       const id = req.params.id;
@@ -497,36 +502,6 @@ async function run() {
         );
       res.send(result);
     });
-
-    app.patch("/applications/assign/:id", verifyJWT, async (req, res) => {
-      try {
-        const appId = req.params.id;
-        const { agentEmail } = req.body;
-
-        if (!agentEmail)
-          return res
-            .status(400)
-            .json({ success: false, message: "Agent required" });
-
-        const result = await collections.applications.updateOne(
-          { _id: new ObjectId(appId) },
-          { $set: { assignedAgent: agentEmail, status: "Assigned" } }
-        );
-
-        if (result.matchedCount === 0)
-          return res
-            .status(404)
-            .json({ success: false, message: "Application not found" });
-
-        res.json({ success: true, message: "Agent assigned successfully" });
-      } catch (err) {
-        console.error(err);
-        res
-          .status(500)
-          .json({ success: false, message: "Failed to assign agent" });
-      }
-    });
-
 
     app.get("/applications/assigned/:agentEmail", async (req, res) => {
       try {
@@ -546,7 +521,50 @@ async function run() {
         res.status(500).json({ error: "Server error" });
       }
     });
-    
+
+    app.patch("/applications/assign/:id", async (req, res) => {
+      try {
+        const appId = req.params.id;
+        const { agentEmail } = req.body;
+
+        if (!agentEmail) {
+          return res.status(400).json({ message: "Agent email is required" });
+        }
+
+        const agent = await collections.users.findOne({
+          email: agentEmail,
+          role: "agent",
+        });
+
+        if (!agent) {
+          return res.status(404).json({ message: "Agent not found" });
+        }
+
+        const result = await collections.applications.updateOne(
+          { _id: new ObjectId(appId) },
+          {
+            $set: {
+              assignedAgent: agentEmail,
+              status: "Assigned",
+              assignedAt: new Date(),
+            },
+          }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "Application not found" });
+        }
+
+        res.json({
+          success: true,
+          message: "Agent assigned successfully",
+          modifiedCount: result.modifiedCount,
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Failed to assign agent" });
+      }
+    });
 
     app.patch(
       "/applications/reject/:id",
@@ -575,7 +593,6 @@ async function run() {
       }
     );
 
-    // Application Routes
     app.post("/applications", verifyToken, async (req, res) => {
       try {
         const application = req.body;
@@ -591,14 +608,28 @@ async function run() {
       }
     });
 
+    // Add this endpoint to allow agents to update application status
     app.patch(
       "/applications/:id/status",
       verifyToken,
-      verifyAdmin,
+      verifyAgent,
       async (req, res) => {
         try {
           const { id } = req.params;
           const { status } = req.body;
+
+          // Check if the application is assigned to this agent
+          const application = await collections.applications.findOne({
+            _id: new ObjectId(id),
+            assignedAgent: req.user.email,
+          });
+
+          if (!application) {
+            return res.status(404).json({
+              success: false,
+              message: "Application not found or not assigned to you",
+            });
+          }
 
           const result = await collections.applications.updateOne(
             { _id: new ObjectId(id) },
@@ -606,19 +637,24 @@ async function run() {
           );
 
           if (result.modifiedCount === 1) {
-            res.json({ success: true });
+            res.json({
+              success: true,
+              message: "Application status updated successfully",
+            });
           } else {
-            res.status(404).json({ message: "Application not found" });
+            res
+              .status(404)
+              .json({ success: false, message: "Application not found" });
           }
         } catch (error) {
           console.error(error);
-          res
-            .status(500)
-            .json({ message: "Failed to update application status" });
+          res.status(500).json({
+            success: false,
+            message: "Failed to update application status",
+          });
         }
       }
     );
-
     app.get("/applications", verifyToken, async (req, res) => {
       try {
         const email = req.query.email || req.user.email;
@@ -702,7 +738,6 @@ async function run() {
       }
     });
 
-    // Payment Routes
     app.post("/create-payment-intent", verifyToken, async (req, res) => {
       try {
         const { amountInCents } = req.body;
@@ -815,7 +850,6 @@ async function run() {
       }
     });
 
-    // Blog Routes
     app.post("/blogs", verifyToken, verifyAgent, async (req, res) => {
       try {
         const blog = req.body;
@@ -848,6 +882,24 @@ async function run() {
       } catch (err) {
         console.error(err);
         res.status(500).json({ message: "Failed to fetch blogs" });
+      }
+    });
+    // Get single blog by id
+    app.get("/blogs/:id", verifyToken, async (req, res) => {
+      try {
+        const blogId = req.params.id;
+        const blog = await collections.blogs.findOne({
+          _id: new ObjectId(blogId),
+        });
+
+        if (!blog) {
+          return res.status(404).json({ message: "Blog not found" });
+        }
+
+        res.json(blog);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Failed to fetch blog" });
       }
     });
 
@@ -886,7 +938,41 @@ async function run() {
       }
     });
 
-    // Newsletter Subscription
+    app.get("/admin-stats", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const [
+          totalUsers,
+          totalAgents,
+          totalPolicies,
+          totalApplications,
+          pendingApplications,
+          approvedApplications,
+          totalPayments,
+        ] = await Promise.all([
+          collections.users.countDocuments(),
+          collections.agents.countDocuments(),
+          collections.policies.countDocuments(),
+          collections.applications.countDocuments(),
+          collections.applications.countDocuments({ status: "pending" }),
+          collections.applications.countDocuments({ status: "approved" }),
+          collections.payments.countDocuments(),
+        ]);
+
+        res.json({
+          totalUsers,
+          totalAgents,
+          totalPolicies,
+          totalApplications,
+          pendingApplications,
+          approvedApplications,
+          totalPayments,
+        });
+      } catch (err) {
+        console.error("Error fetching admin stats:", err);
+        res.status(500).json({ message: "Failed to fetch admin statistics" });
+      }
+    });
+
     app.post("/subscribe", async (req, res) => {
       try {
         const { name, email } = req.body;
@@ -935,5 +1021,5 @@ async function run() {
 run().catch(console.dir);
 
 app.listen(port, () => {
-  console.log(`🚀 Server is listening on port ${port}`);
+  console.log(`Server is listening on port ${port}`);
 });
