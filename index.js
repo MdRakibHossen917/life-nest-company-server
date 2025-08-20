@@ -210,7 +210,6 @@ async function run() {
       }
     });
 
-    // User Routes
     app.get("/users/role", async (req, res) => {
       try {
         const email = req.query.email;
@@ -256,7 +255,7 @@ async function run() {
     app.get("/agents/all", async (req, res) => {
       try {
         const agents = await collections.agents.find({}).toArray();
-        res.json(agents); // return as array
+        res.json(agents); 
       } catch (err) {
         console.error(err);
         res.status(500).json({ message: "Failed to fetch agents" });
@@ -283,7 +282,6 @@ async function run() {
             .json({ message: "Name and Email are required" });
         }
 
-        // Default role
         if (!userData.role) {
           userData.role = "user";
         }
@@ -301,13 +299,11 @@ async function run() {
       }
     });
 
-    // In your server.js, find the PATCH /users/:email endpoint and update it:
     app.patch("/users/:email", verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
         const updateData = req.body;
 
-        // Allow users to update their own profile OR allow admins to update any profile
         if (req.user.email !== email && req.user.role !== "admin") {
           return res.status(403).json({ message: "Forbidden" });
         }
@@ -329,7 +325,6 @@ async function run() {
           .json({ success: false, message: "Failed to update user" });
       }
     });
-    // Make Admin route
     app.put("/make-admin", async (req, res) => {
       const { email } = req.body;
       if (!email) return res.status(400).json({ message: "Email is required" });
@@ -353,7 +348,6 @@ async function run() {
       }
     });
 
-    // Agent Routes
     app.post("/agents", verifyToken, async (req, res) => {
       console.log("Headers received:", req.headers);
       try {
@@ -391,10 +385,9 @@ async function run() {
       }
     });
 
-    // Get only 3 approved agents
     app.get("/agents", async (req, res) => {
       try {
-        const limit = parseInt(req.query.limit) || 3; // default 3
+        const limit = parseInt(req.query.limit) || 3; 
         const query = { status: "approved" };
 
         const agents = await collections.agents
@@ -608,7 +601,6 @@ async function run() {
       }
     });
 
-    // Add this endpoint to allow agents to update application status
     app.patch(
       "/applications/:id/status",
       verifyToken,
@@ -618,7 +610,6 @@ async function run() {
           const { id } = req.params;
           const { status } = req.body;
 
-          // Check if the application is assigned to this agent
           const application = await collections.applications.findOne({
             _id: new ObjectId(id),
             assignedAgent: req.user.email,
@@ -884,7 +875,7 @@ async function run() {
         res.status(500).json({ message: "Failed to fetch blogs" });
       }
     });
-    // Get single blog by id
+
     app.get("/blogs/:id", verifyToken, async (req, res) => {
       try {
         const blogId = req.params.id;
