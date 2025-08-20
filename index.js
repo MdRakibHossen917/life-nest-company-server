@@ -11,7 +11,11 @@ const app = express();
 const port = process.env.PORT || 5000;
 
 const corsOptions = {
-  origin: ["http://localhost:5173", "http://localhost:5174"],
+  origin: [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "https://life-nest-insurance.web.app",
+  ],
   credentials: true,
 };
 app.use(cors(corsOptions));
@@ -33,7 +37,6 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-
     const db = client.db("lifenestDB");
     const collections = {
       policies: db.collection("policies"),
@@ -46,20 +49,30 @@ async function run() {
       purchases: db.collection("purchases"),
     };
 
-    const verifyJWT = async (req, res, next) => {
+    app.post("/jwt", async (req, res) => {
+      const user = req.body;
+      const token = jwt.sign({ email: user.email }, process.env.JWT_SECRET, {
+        expiresIn: "12h",
+      });
+      res.send({ token });
+    });
+
+    const verifyJWT = (req, res, next) => {
       const authHeader = req.headers.authorization;
-      if (!authHeader) return res.status(401).send({ message: "Unauthorized" });
+      if (!authHeader) return res.status(401).json({ message: "Unauthorized" });
 
       const token = authHeader.split(" ")[1];
-      try {
-        const decoded = await admin.auth().verifyIdToken(token);
+      jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+        if (err) {
+          return res
+            .status(403)
+            .json({ message: "Forbidden or Expired Token" });
+        }
         req.user = decoded;
         next();
-      } catch (err) {
-        console.error(err);
-        res.status(403).send({ message: "Forbidden" });
-      }
+      });
     };
+
     const verifyToken = async (req, res, next) => {
       const authHeader = req.headers.authorization;
       if (!authHeader?.startsWith("Bearer ")) {
@@ -226,18 +239,6 @@ async function run() {
       }
     });
 
-    app.get("/users/:email", async (req, res) => {
-      try {
-        const email = req.params.email;
-        const user = await collections.users.findOne({ email });
-        if (!user) return res.status(404).json({ message: "User not found" });
-        res.json(user);
-      } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: "Server error" });
-      }
-    });
-
     app.get("/users", async (req, res) => {
       try {
         const email = req.query.email;
@@ -255,7 +256,7 @@ async function run() {
     app.get("/agents/all", async (req, res) => {
       try {
         const agents = await collections.agents.find({}).toArray();
-        res.json(agents); 
+        res.json(agents);
       } catch (err) {
         console.error(err);
         res.status(500).json({ message: "Failed to fetch agents" });
@@ -387,7 +388,7 @@ async function run() {
 
     app.get("/agents", async (req, res) => {
       try {
-        const limit = parseInt(req.query.limit) || 3; 
+        const limit = parseInt(req.query.limit) || 3;
         const query = { status: "approved" };
 
         const agents = await collections.agents
@@ -912,20 +913,6 @@ async function run() {
       } catch (err) {
         console.error(err);
         res.status(500).json({ message: "Failed to delete blog" });
-      }
-    });
-
-    app.get("/blogs/latest", async (req, res) => {
-      try {
-        const latestBlogs = await collections.blogs
-          .find()
-          .sort({ publishDate: -1 })
-          .limit(4)
-          .toArray();
-        res.json(latestBlogs);
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Failed to fetch latest blogs" });
       }
     });
 
