@@ -1,47 +1,38 @@
-# Life Nest Insurance Company
+# LifeNest Backend
 
-A full-stack Life Insurance Management Platform built with the MERN stack, featuring authentication, role-based dashboards (Admin, Agent, Customer), dynamic policy and blog systems, secure payment integration, and modern UI/UX.
+Backend server for **LifeNest Insurance Platform**, providing APIs for managing users, policies, blogs, and transactions.
 
-- **Client (Frontend):** [life-nest-insurance-company-client](https://github.com/MdRakibHossen917/life-nest-insurance-company-client)
-- **Server (Backend):** [life-nest-company-server](https://github.com/MdRakibHossen917/life-nest-company-server)
-- **Live Demo:** [https://life-nest-insurance.web.app/](https://life-nest-insurance.web.app/)
+## Table of Contents
+- [Features](#features)
+- [Technologies](#technologies)
+- [Installation](#installation)
+- [Environment Variables](#environment-variables)
+- [API Endpoints](#api-endpoints)
+- [Usage](#usage)
+- [Contributing](#contributing)
+- [License](#license)
 
----
+## Features
+- User Authentication (Email/Password & Firebase Google Sign-in)
+- Role-based access (Admin, Agent, Customer)
+- CRUD operations for Insurance Policies
+- Blog management (Latest blogs, CRUD)
+- Transaction management
+- Secure API routes using JWT and Firebase token verification
+- Stripe payment integration (optional)
+- Error handling and logging
 
-## Project Structure
+## Technologies
+- Node.js
+- Express.js
+- MongoDB / Mongoose
+- Firebase Admin SDK
+- JWT (JSON Web Token)
+- Stripe (for payments)
+- CORS, dotenv, and other middleware
 
-### Client (Frontend)
-
-- **Framework:** React with Vite
-- **Authentication:** Firebase Authentication
-- **State Management:** Context API
-- **Styling:** Tailwind CSS
-- **Payment Integration:** Stripe
-
-### Server (Backend)
-
-- **Environment:** Node.js with Express.js
-- **Database:** MongoDB
-- **Authentication:** Firebase Admin SDK
-- **Payment Integration:** Stripe
-- **Hosting:** Vercel
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) v16+
-- [npm](https://www.npmjs.com/) v7+
-- [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) account
-- [Firebase Project](https://console.firebase.google.com/)
-- [Stripe Account](https://dashboard.stripe.com/)
-
----
-
-### 1. Clone the Repositories
-
+## Installation
+1. Clone the repository:  
 ```bash
-git clone https://github.com/MdRakibHossen917/life-nest-insurance-company-client.git
-git clone https://github.com/MdRakibHossen917/life-nest-company-server.git
+git clone https://github.com/yourusername/lifenest-backend.git
+cd lifenest-backend
